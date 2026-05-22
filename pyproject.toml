@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "python_color_transfer"
+name = "python-color-transfer"
 version = "0.2.0"
 description = "Three methods of color transfer implemented in python."
 authors = ["pengbo-learn"]
