@@ -63,9 +63,8 @@ class ColorTransfer:
         std_in = np.std(img_arr_in, axis=(0, 1), keepdims=True)
         std_ref = np.std(img_arr_ref, axis=(0, 1), keepdims=True)
         img_arr_out = (img_arr_in - mean_in) / std_in * std_ref + mean_ref
-        img_arr_out[img_arr_out < 0] = 0
-        img_arr_out[img_arr_out > 255] = 255
-        return img_arr_out.astype("uint8")
+        np.clip(img_arr_out, 0, 255, out=img_arr_out)
+        return img_arr_out.astype(np.uint8)
 
     def pdf_transfer(self, img_arr_in=None, img_arr_ref=None, regrain=False):
         """Apply probability density function transfer.
@@ -87,9 +86,8 @@ class ColorTransfer:
         reshape_arr_out = self.pdf_transfer_nd(arr_in=reshape_arr_in,
                                                arr_ref=reshape_arr_ref)
         # reshape (c, h*w) to (h, w, c)
-        reshape_arr_out[reshape_arr_out < 0] = 0
-        reshape_arr_out[reshape_arr_out > 1] = 1
-        reshape_arr_out = (255.0 * reshape_arr_out).astype("uint8")
+        np.clip(reshape_arr_out, 0, 1, out=reshape_arr_out)
+        reshape_arr_out = (255.0 * reshape_arr_out).astype(np.uint8)
         img_arr_out = reshape_arr_out.transpose().reshape(h, w, c)
         if regrain:
             img_arr_out = self.RG.regrain(img_arr_in=img_arr_in,
@@ -111,17 +109,12 @@ class ColorTransfer:
         for rotation_matrix in self.rotation_matrices:
             rot_arr_in = np.matmul(rotation_matrix, arr_out)
             rot_arr_ref = np.matmul(rotation_matrix, arr_ref)
-            rot_arr_out = np.zeros(rot_arr_in.shape)
+            rot_arr_out = np.empty_like(rot_arr_in)
             for i in range(rot_arr_out.shape[0]):
                 rot_arr_out[i] = self._pdf_transfer_1d(rot_arr_in[i],
                                                        rot_arr_ref[i])
-            # func = lambda x, n : self._pdf_transfer_1d(x[:n], x[n:])
-            # rot_arr = np.concatenate((rot_arr_in, rot_arr_ref), axis=1)
-            # rot_arr_out = np.apply_along_axis(func, 1, rot_arr, rot_arr_in.shape[1])
             rot_delta_arr = rot_arr_out - rot_arr_in
-            delta_arr = np.matmul(
-                rotation_matrix.transpose(), rot_delta_arr
-            )  # np.linalg.solve(rotation_matrix, rot_delta_arr)
+            delta_arr = np.matmul(rotation_matrix.transpose(), rot_delta_arr)
             arr_out = step_size * delta_arr + arr_out
         return arr_out
 
@@ -136,12 +129,10 @@ class ColorTransfer:
             arr_out: transfered input array.
         """
 
-        arr = np.concatenate((arr_in, arr_ref))
         # discretization as histogram
-        min_v = arr.min() - self.eps
-        max_v = arr.max() + self.eps
-        xs = np.array(
-            [min_v + (max_v - min_v) * i / n for i in range(n + 1)])
+        min_v = min(arr_in.min(), arr_ref.min()) - self.eps
+        max_v = max(arr_in.max(), arr_ref.max()) + self.eps
+        xs = np.linspace(min_v, max_v, n + 1)
         hist_in, _ = np.histogram(arr_in, xs)
         hist_ref, _ = np.histogram(arr_ref, xs)
         xs = xs[:-1]
@@ -174,9 +165,8 @@ class Regrain:
         img_arr_out = np.array(img_arr_in)
         img_arr_out = self.regrain_rec(img_arr_out, img_arr_in, img_arr_col,
                                        self.nbits, self.level)
-        img_arr_out[img_arr_out < 0] = 0
-        img_arr_out[img_arr_out > 1] = 1
-        img_arr_out = (255.0 * img_arr_out).astype("uint8")
+        np.clip(img_arr_out, 0, 1, out=img_arr_out)
+        img_arr_out = (255.0 * img_arr_out).astype(np.uint8)
         return img_arr_out
 
     def regrain_rec(self, img_arr_out, img_arr_in, img_arr_col, nbits, level):
@@ -210,7 +200,6 @@ class Regrain:
               eps=1e-6):
         """direct translation of matlab code. """
 
-        [width, height, c] = img_arr_in.shape
         first_pad_0 = lambda arr: np.concatenate(
             (arr[:1, :], arr[:-1, :]), axis=0)
         first_pad_1 = lambda arr: np.concatenate(
@@ -225,7 +214,7 @@ class Regrain:
         delta = np.sqrt((delta_x**2 + delta_y**2).sum(axis=2, keepdims=True))
 
         psi = 256 * delta / 5
-        psi[psi > 1] = 1
+        np.clip(psi, None, 1, out=psi)
         phi = 30 * 2**(-level) / (1 + 10 * delta / self.smoothness)
 
         phi1 = (last_pad_1(phi) + phi) / 2
@@ -233,20 +222,23 @@ class Regrain:
         phi3 = (first_pad_1(phi) + phi) / 2
         phi4 = (first_pad_0(phi) + phi) / 2
 
+        # Broadcasting handles the (h, w, 1) * (h, w, c) shape mismatch
+        # without materializing tiled (h, w, c) copies — saves significant
+        # memory and time in this inner loop.
+        den_inv = 1.0 / (psi + phi1 + phi2 + phi3 + phi4 + eps)
         rho = 1 / 5.0
-        for i in range(nbit):
-            den = psi + phi1 + phi2 + phi3 + phi4
+        one_minus_rho = 1 - rho
+        for _ in range(nbit):
             num = (
-                np.tile(psi, [1, 1, c]) * img_arr_col +
-                np.tile(phi1, [1, 1, c]) *
+                psi * img_arr_col +
+                phi1 *
                 (last_pad_1(img_arr_out) - last_pad_1(img_arr_in) + img_arr_in)
-                + np.tile(phi2, [1, 1, c]) *
+                + phi2 *
                 (last_pad_0(img_arr_out) - last_pad_0(img_arr_in) + img_arr_in)
-                + np.tile(phi3, [1, 1, c]) *
+                + phi3 *
                 (first_pad_1(img_arr_out) - first_pad_1(img_arr_in) +
-                 img_arr_in) + np.tile(phi4, [1, 1, c]) *
+                 img_arr_in) + phi4 *
                 (first_pad_0(img_arr_out) - first_pad_0(img_arr_in) +
                  img_arr_in))
-            img_arr_out = (num / np.tile(den + eps, [1, 1, c]) * (1 - rho) +
-                           rho * img_arr_out)
+            img_arr_out = num * den_inv * one_minus_rho + rho * img_arr_out
         return img_arr_out
