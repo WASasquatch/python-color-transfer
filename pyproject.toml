@@ -1,19 +1,22 @@
-[tool.poetry]
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
 name = "python-color-transfer"
 version = "0.2.0"
 description = "Three methods of color transfer implemented in python."
-authors = ["pengbo-learn"]
-license = "MIT"
 readme = "README.md"
-include=['imgs']
+license = { text = "MIT" }
+authors = [{ name = "pengbo-learn" }]
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    "numpy>=1.22,<3.0",
+    "opencv-python>=4.5,<5.0",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.10,<4.0"
-opencv-python = ">=4.5,<5.0"
-numpy = ">=1.22,<3.0"
+[project.urls]
+Homepage = "https://github.com/pengbo-learn/python-color-transfer"
 
-[tool.poetry.dev-dependencies]
-
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+[tool.setuptools]
+packages = ["python_color_transfer"]
